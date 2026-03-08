@@ -367,6 +367,7 @@ static void handle_enter_key(void) {
 
 	/* 执行当前步骤的enter命令 */
 	execute_command(g_config.steps[g_state.current_step].enter_command);
+	usleep(500000);
 
 	/* 进入下一步或结束 */
 	if (g_state.current_step + 1 < g_config.step_count) {
