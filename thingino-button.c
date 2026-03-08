@@ -26,11 +26,20 @@
 #include <sys/stat.h>
 #include <ctype.h>
 #include <sys/select.h>
-#include <linux/input.h>
 #include "cJSON.h"
 
 #define CONFIG_FILE "/etc/thingino-button.conf"
 #define DEFAULT_DEVICE "/dev/input/event0"
+#define EV_KEY 0x01
+#define KEY_ENTER 28
+#define KEY_1 2
+
+struct input_event {
+	struct timeval time;
+	uint16_t type;
+	uint16_t code;
+	int32_t value;
+};
 #define MAX_STEPS 10
 #define MAX_CONFIG_SIZE (1024 * 1024)
 #define MAX_COMMAND_LEN 1024
@@ -400,34 +409,37 @@ static void handle_key1(void) {
  * 读取并处理输入事件
  */
 static int process_input_event(int fd) {
-	struct input_event ev;
-	ssize_t n = read(fd, &ev, sizeof(ev));
+	char buf[16];
+	int n = read(fd, buf, sizeof(buf));
 
-	if (n != sizeof(ev)) {
-		if (n < 0 && errno != EAGAIN) {
-			log_message("Error reading event: %s\n", strerror(errno));
-			return -1;
+	if (n == 16) {
+		struct input_event ev;
+		ev.time.tv_sec = *(int32_t *)(buf);
+		ev.time.tv_usec = *(int32_t *)(buf + 4);
+		ev.type = *(uint16_t *)(buf + 8);
+		ev.code = *(uint16_t *)(buf + 10);
+		ev.value = *(int32_t *)(buf + 12);
+
+		if (ev.type != EV_KEY) {
+			return 0;
 		}
-		return 0;
-	}
 
-	/* 只处理按键按下事件 */
-	if (ev.type != EV_KEY || ev.value != 1) {
-		return 0;
-	}
-
-	log_message("Key press: code %d\n", ev.code);
-
-	switch (ev.code) {
-		case KEY_ENTER:
-			handle_enter_key();
-			break;
-		case KEY_1:
-			handle_key1();
-			break;
-		default:
-			/* 忽略其他按键 */
-			break;
+		if (ev.value == 1) {
+			log_message("Key press: code %d\n", ev.code);
+			switch (ev.code) {
+				case KEY_ENTER:
+					handle_enter_key();
+					break;
+				case KEY_1:
+					handle_key1();
+					break;
+				default:
+					break;
+			}
+		}
+	} else if (n < 0 && errno != EAGAIN) {
+		log_message("Error reading event: %s\n", strerror(errno));
+		return -1;
 	}
 
 	return 0;
