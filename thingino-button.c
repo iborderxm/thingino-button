@@ -26,7 +26,7 @@
 #include <sys/stat.h>
 #include <ctype.h>
 #include <sys/select.h>
-#include "cJSON.h"
+#include <json_config.h>
 
 #define CONFIG_FILE "/etc/thingino-button.conf"
 #define DEFAULT_DEVICE "/dev/input/event0"
@@ -137,44 +137,44 @@ void execute_command(const char *command) {
 /*
  * 解析单个步骤配置
  */
-static int parse_step_config(cJSON *step_json, StepConfig *step, int index) {
-	cJSON *step_num = cJSON_GetObjectItem(step_json, "step_num");
-	cJSON *prompt = cJSON_GetObjectItem(step_json, "prompt");
-	cJSON *enter = cJSON_GetObjectItem(step_json, "enter");
-	cJSON *key1 = cJSON_GetObjectItem(step_json, "key1");
-	cJSON *timeout = cJSON_GetObjectItem(step_json, "timeout");
+static int parse_step_config(JsonValue *step_json, StepConfig *step, int index) {
+	JsonValue *step_num = get_object_item(step_json, "step_num");
+	JsonValue *prompt = get_object_item(step_json, "prompt");
+	JsonValue *enter = get_object_item(step_json, "enter");
+	JsonValue *key1 = get_object_item(step_json, "key1");
+	JsonValue *timeout = get_object_item(step_json, "timeout");
 
-	if (!step_num || !cJSON_IsNumber(step_num)) {
+	if (!step_num || step_num->type != JSON_NUMBER) {
 		log_message("Error: Step %d missing step_num\n", index);
 		return -1;
 	}
-	if (!prompt || !cJSON_IsString(prompt)) {
+	if (!prompt || prompt->type != JSON_STRING || !prompt->value.string) {
 		log_message("Error: Step %d missing prompt\n", index);
 		return -1;
 	}
-	if (!enter || !cJSON_IsString(enter)) {
+	if (!enter || enter->type != JSON_STRING || !enter->value.string) {
 		log_message("Error: Step %d missing enter\n", index);
 		return -1;
 	}
-	if (!key1 || !cJSON_IsString(key1)) {
+	if (!key1 || key1->type != JSON_STRING || !key1->value.string) {
 		log_message("Error: Step %d missing key1\n", index);
 		return -1;
 	}
-	if (!timeout || !cJSON_IsNumber(timeout)) {
+	if (!timeout || timeout->type != JSON_NUMBER) {
 		log_message("Error: Step %d missing timeout\n", index);
 		return -1;
 	}
 
-	int timeout_val = (int)timeout->valuedouble;
+	int timeout_val = (int)timeout->value.number;
 	if (timeout_val < 1) {
 		log_message("Error: Step %d timeout must be >= 1\n", index);
 		return -1;
 	}
 
-	step->step_number = step_num->valueint;
-	safe_strcpy(step->prompt_command, sizeof(step->prompt_command), prompt->valuestring);
-	safe_strcpy(step->enter_command, sizeof(step->enter_command), enter->valuestring);
-	safe_strcpy(step->key1_command, sizeof(step->key1_command), key1->valuestring);
+	step->step_number = (int)step_num->value.number;
+	safe_strcpy(step->prompt_command, sizeof(step->prompt_command), prompt->value.string);
+	safe_strcpy(step->enter_command, sizeof(step->enter_command), enter->value.string);
+	safe_strcpy(step->key1_command, sizeof(step->key1_command), key1->value.string);
 	step->timeout_seconds = timeout_val;
 
 	return 0;
@@ -182,97 +182,54 @@ static int parse_step_config(cJSON *step_json, StepConfig *step, int index) {
 
 /*
  * 加载并解析配置文件
+ *
+ * 说明：JSON 解析改为动态链接 libjct（jct 库）提供的接口，
+ * 配置文件读取与解析由 libjct 的 parse_json_file 完成。
  */
-void load_config(void) {
-	FILE *file = fopen(CONFIG_FILE, "r");
-	if (!file) {
-		log_message("Failed to open config file: %s\n", strerror(errno));
-		exit(EXIT_FAILURE);
-	}
-
-	/* 获取文件大小 */
-	if (fseek(file, 0, SEEK_END) != 0) {
-		log_message("Failed to seek config file: %s\n", strerror(errno));
-		fclose(file);
-		exit(EXIT_FAILURE);
-	}
-	long file_size = ftell(file);
-	if (fseek(file, 0, SEEK_SET) != 0) {
-		log_message("Failed to seek config file: %s\n", strerror(errno));
-		fclose(file);
-		exit(EXIT_FAILURE);
-	}
-
-	if (file_size <= 0 || file_size > MAX_CONFIG_SIZE) {
-		log_message("Error: Config file size (%ld) invalid or exceeds limit (%d)\n",
-			file_size, MAX_CONFIG_SIZE);
-		fclose(file);
-		exit(EXIT_FAILURE);
-	}
-
-	/* 读取文件内容 */
-	char *file_content = malloc(file_size + 1);
-	if (!file_content) {
-		log_message("Failed to allocate memory: %s\n", strerror(errno));
-		fclose(file);
-		exit(EXIT_FAILURE);
-	}
-
-	size_t read_size = fread(file_content, 1, file_size, file);
-	fclose(file);
-
-	if (read_size != (size_t)file_size) {
-		log_message("Failed to read config file completely\n");
-		free(file_content);
-		exit(EXIT_FAILURE);
-	}
-	file_content[file_size] = '\0';
-
-	/* 解析JSON */
-	cJSON *root = cJSON_Parse(file_content);
-	free(file_content);
-
+void load_button_config(void) {
+	/* 解析JSON（libjct 负责读取文件并解析） */
+	JsonValue *root = parse_json_file(CONFIG_FILE);
 	if (!root) {
-		log_message("Failed to parse JSON: %s\n", cJSON_GetErrorPtr());
+		log_message("Failed to open or parse config file: %s\n", CONFIG_FILE);
 		exit(EXIT_FAILURE);
 	}
 
 	/* 提取device字段 */
-	cJSON *device_json = cJSON_GetObjectItem(root, "device");
-	if (device_json && cJSON_IsString(device_json)) {
-		safe_strcpy(g_config.input_device, sizeof(g_config.input_device), device_json->valuestring);
+	JsonValue *device_json = get_object_item(root, "device");
+	if (device_json && device_json->type == JSON_STRING && device_json->value.string) {
+		safe_strcpy(g_config.input_device, sizeof(g_config.input_device), device_json->value.string);
 	} else {
 		log_message("Warning: Using default device: %s\n", DEFAULT_DEVICE);
 		safe_strcpy(g_config.input_device, sizeof(g_config.input_device), DEFAULT_DEVICE);
 	}
 
 	/* 解析configuration */
-	cJSON *configuration = cJSON_GetObjectItem(root, "configuration");
+	JsonValue *configuration = get_object_item(root, "configuration");
 	if (!configuration) {
 		log_message("Error: configuration section not found\n");
-		cJSON_Delete(root);
+		free_json_value(root);
 		exit(EXIT_FAILURE);
 	}
 
 	/* 解析KEY_ENTER的多步骤配置 */
-	cJSON *key_enter = cJSON_GetObjectItem(configuration, "KEY_ENTER");
+	JsonValue *key_enter = get_object_item(configuration, "KEY_ENTER");
 	if (key_enter) {
-		cJSON *actions = cJSON_GetObjectItem(key_enter, "action");
-		if (actions && cJSON_IsArray(actions)) {
-			int count = cJSON_GetArraySize(actions);
+		JsonValue *actions = get_object_item(key_enter, "action");
+		if (actions && actions->type == JSON_ARRAY) {
+			int count = get_array_size(actions);
 			if (count <= 0) {
 				log_message("Error: KEY_ENTER.action array is empty\n");
-				cJSON_Delete(root);
+				free_json_value(root);
 				exit(EXIT_FAILURE);
 			}
 
 			g_config.step_count = (count > MAX_STEPS) ? MAX_STEPS : count;
 
 			for (int i = 0; i < g_config.step_count; i++) {
-				cJSON *step = cJSON_GetArrayItem(actions, i);
+				JsonValue *step = get_array_item(actions, i);
 				if (!step || parse_step_config(step, &g_config.steps[i], i) != 0) {
 					log_message("Error: Failed to parse step %d\n", i);
-					cJSON_Delete(root);
+					free_json_value(root);
 					exit(EXIT_FAILURE);
 				}
 			}
@@ -281,16 +238,16 @@ void load_config(void) {
 	}
 
 	/* 解析KEY_1配置 */
-	cJSON *key1_config = cJSON_GetObjectItem(configuration, "KEY_1");
+	JsonValue *key1_config = get_object_item(configuration, "KEY_1");
 	if (key1_config) {
-		cJSON *action = cJSON_GetObjectItem(key1_config, "action");
-		if (action && cJSON_IsString(action)) {
-			safe_strcpy(g_config.key1_action, sizeof(g_config.key1_action), action->valuestring);
+		JsonValue *action = get_object_item(key1_config, "action");
+		if (action && action->type == JSON_STRING && action->value.string) {
+			safe_strcpy(g_config.key1_action, sizeof(g_config.key1_action), action->value.string);
 			g_config.has_key1_config = 1;
 
-			cJSON *timeout = cJSON_GetObjectItem(key1_config, "timeout");
-			if (timeout && cJSON_IsNumber(timeout)) {
-				g_config.key1_timeout = (int)timeout->valuedouble;
+			JsonValue *timeout = get_object_item(key1_config, "timeout");
+			if (timeout && timeout->type == JSON_NUMBER) {
+				g_config.key1_timeout = (int)timeout->value.number;
 				if (g_config.key1_timeout < 1) {
 					g_config.key1_timeout = 2;
 				}
@@ -300,7 +257,7 @@ void load_config(void) {
 		}
 	}
 
-	cJSON_Delete(root);
+	free_json_value(root);
 }
 
 /*
@@ -588,7 +545,7 @@ int main(int argc, char *argv[]) {
 	log_message("thingino-button started\n");
 
 	/* 加载配置 */
-	load_config();
+	load_button_config();
 
 	if (!silent_mode && !daemon_mode) {
 		log_message("Using input device: %s\n", g_config.input_device);

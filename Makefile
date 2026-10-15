@@ -2,7 +2,7 @@
 TARGET = thingino-button
 
 # Define the source files
-SRCS = thingino-button.c cJSON.c
+SRCS = thingino-button.c
 
 # Use CROSS_COMPILE if defined, otherwise default to the native gcc
 CC = $(CROSS_COMPILE)gcc
@@ -13,6 +13,9 @@ CFLAGS = -Wall -Wextra -Os
 # Define the linker flags
 LDFLAGS =
 
+# Link libraries: JSON parsing is provided by the dynamically linked libjct
+LIBS = -ljct
+
 # Define the object files (replace .c with .o)
 OBJS = $(SRCS:.c=.o)
 
@@ -21,7 +24,7 @@ all: $(TARGET)
 
 # Rule to build the target executable
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 # Rule to compile the source files into object files
 %.o: %.c
